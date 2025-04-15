@@ -25,7 +25,9 @@ def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
             gripper_states = F['data'][f"demo_{demo_id}"]["obs"]["gripper_states"][()]
             joint_states = F['data'][f"demo_{demo_id}"]["obs"]["joint_states"][()]
             images = F['data'][f"demo_{demo_id}"]["obs"]["agentview_rgb"][()]
+            segmentation_masks = F['data'][f"demo_{demo_id}"]["obs"]["agentview_segmentation_instance"][()]
             wrist_images = F['data'][f"demo_{demo_id}"]["obs"]["eye_in_hand_rgb"][()]
+            segmentation_instances =  F['data'][f"demo_{demo_id}"]["instance_names"][()]
 
         # compute language instruction
         raw_file_string = os.path.basename(episode_path).split('/')[-1]
@@ -44,6 +46,7 @@ def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
             episode.append({
                 'observation': {
                     'image': images[i][::-1,::-1],
+                    'segmentation_mask': segmentation_masks[i][::-1,::-1],
                     'wrist_image': wrist_images[i][::-1,::-1],
                     'state': np.asarray(np.concatenate((states[i], gripper_states[i]), axis=-1), np.float32),
                     'joint_state': np.asarray(joint_states[i], dtype=np.float32),
@@ -62,7 +65,8 @@ def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
             'steps': episode,
             'episode_metadata': {
                 'file_path': episode_path
-            }
+            },
+            'segmentation_instances': [key.decode('utf-8') if isinstance(key, bytes) else key for key in segmentation_instances]
         }
 
         # if you want to skip an example for whatever reason, simply return None
@@ -85,9 +89,9 @@ def _generate_examples(paths) -> Iterator[Tuple[str, Any]]:
 class LIBEROGoal(MultiThreadedDatasetBuilder):
     """DatasetBuilder for example dataset."""
 
-    VERSION = tfds.core.Version('1.0.0')
+    VERSION = tfds.core.Version('1.0.1')
     RELEASE_NOTES = {
-      '1.0.0': 'Initial release.',
+      '1.0.1': 'Segmented mask.',
     }
     N_WORKERS = 40             # number of parallel workers for data conversion
     MAX_PATHS_IN_MEMORY = 80   # number of paths converted & stored in memory before writing to disk
@@ -106,6 +110,11 @@ class LIBEROGoal(MultiThreadedDatasetBuilder):
                             dtype=np.uint8,
                             encoding_format='jpeg',
                             doc='Main camera RGB observation.',
+                        ),
+                        'segmentation_mask': tfds.features.Tensor(
+                            shape=(256, 256, 1),
+                            dtype=np.int32,
+                            doc='Segmentation mask RGB observation.',
                         ),
                         'wrist_image': tfds.features.Image(
                             shape=(256, 256, 3),
@@ -153,6 +162,10 @@ class LIBEROGoal(MultiThreadedDatasetBuilder):
                         doc='Language Instruction.'
                     ),
                 }),
+                'segmentation_instances': tfds.features.Sequence(
+                    feature=tfds.features.Text(),
+                    doc='Segmentation instance names.',
+                ),
                 'episode_metadata': tfds.features.FeaturesDict({
                     'file_path': tfds.features.Text(
                         doc='Path to the original data file.'
@@ -163,5 +176,5 @@ class LIBEROGoal(MultiThreadedDatasetBuilder):
     def _split_paths(self):
         """Define filepaths for data splits."""
         return {
-            "train": glob.glob("/PATH/TO/LIBERO/libero/datasets/libero_goal_no_noops/*.hdf5"),
+            "train": glob.glob("/scratch/as20482/LIBERO/libero/datasets/libero_goal_masked/*.hdf5"),
         }
